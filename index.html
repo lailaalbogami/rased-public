@@ -668,7 +668,6 @@
   const PRIVATE_FILTER_FIELDS = [
     ...PUBLIC_FILTER_FIELDS,
     { key: '__employee',            allLabel: 'كل موظفي فريق الجودة', privateOnly: true },
-    { key: 'authority',              allLabel: 'كل السلطات', privateOnly: true },
     { key: 'overallClass',           allLabel: 'كل تصنيفات التقويم العام', privateOnly: true },
     { key: '__envClass',             allLabel: 'كل تصنيفات درجة البيئة', privateOnly: true }
   ];
@@ -766,8 +765,19 @@
   function ensureFilterDefaults(){
     // تُبنى عناصر الفلاتر ديناميكيًا حسب وضع العرض (عام/موظفين).
   }
+  function privateRecordForSchool(wid){
+    const key = String(wid);
+    let rec = privateMap.get(key);
+    if (rec) return rec;
+    // احتياط للتعامل مع أي شكل بديل قد تعيده واجهة تسجيل الدخول.
+    for (const [k,v] of privateMap.entries()) {
+      if (String(k) === key) return v || {};
+      if (v && typeof v === 'object' && String(v.ministry_number ?? v.wid ?? '') === key) return v;
+    }
+    return {};
+  }
   function privateEmployeeValue(r){
-    return (privateMap.get(String(r.wid)) || {}).employee_name || r.officer || '';
+    return privateRecordForSchool(r.wid).employee_name || r.officer || '';
   }
   function envClassValue(r){
     const v = r.envScore;
@@ -779,38 +789,91 @@
     if (n < 90) return '75 إلى أقل من 90';
     return '90 فأعلى';
   }
-  function filterOptionValues(f){
-    if (f.key === '__employee') return uniqueSorted(SCHOOLS.map(privateEmployeeValue));
-    if (f.key === '__envClass') return uniqueSorted(SCHOOLS.map(envClassValue));
-    return uniqueSorted(SCHOOLS.map(r => r[f.key]));
+  function filterOptionValues(f, rows) {
+    if (f.key === '__employee') return uniqueSorted(rows.map(privateEmployeeValue));
+    if (f.key === '__envClass') return uniqueSorted(rows.map(envClassValue));
+    return uniqueSorted(rows.map(r => r[f.key]));
   }
+
   function filterValueMatches(r, f, value){
     if (!value) return true;
     if (f.key === '__employee') return privateEmployeeValue(r) === value;
     if (f.key === '__envClass') return envClassValue(r) === value;
     return r[f.key] === value;
   }
+
+  // الفلاتر مترابطة: خيارات كل فلتر تُبنى من النتائج الناتجة عن بقية الفلاتر.
+  // يستثنى الفلتر نفسه عند حساب خياراته حتى لا يختفي الخيار المحدد.
+  function rowsForFilterOptions(targetKey) {
+    return SCHOOLS.filter(r => {
+      if (staffMode && privateRole !== 'manager' && !privateMap.has(String(r.wid))) return false;
+      for (const f of getFilterFields()) {
+        if (f.key === targetKey) continue;
+        const value = state.filters[f.key];
+        if (value && !filterValueMatches(r, f, value)) return false;
+      }
+      if (state.urgentOnly && !r.inUrgentInitiative) return false;
+      const s = state.search.trim().toLowerCase();
+      if (s) {
+        const hay = `${r.name || ''} ${r.wid || ''}`.toLowerCase();
+        if (!hay.includes(s)) return false;
+      }
+      return true;
+    });
+  }
+
   function buildFilterBar() {
     const host = document.getElementById('filtersDynamic');
     if (!host) return;
     host.innerHTML = '';
-    getFilterFields().forEach((f, i) => {
+
+    const fields = getFilterFields();
+
+    fields.forEach((f, i) => {
       const sel = document.createElement('select');
       sel.id = 'filterSel' + i;
       sel.setAttribute('aria-label', f.allLabel);
+
       const all = document.createElement('option');
-      all.value = ''; all.textContent = f.allLabel; sel.appendChild(all);
-      filterOptionValues(f).forEach(v => {
+      all.value = '';
+      all.textContent = f.allLabel;
+      sel.appendChild(all);
+
+      const rows = rowsForFilterOptions(f.key);
+      const values = filterOptionValues(f, rows);
+
+      values.forEach(v => {
+        if (v === null || v === undefined || String(v).trim() === '') return;
         const opt = document.createElement('option');
-        opt.value = v; opt.textContent = v; sel.appendChild(opt);
+        opt.value = v;
+        opt.textContent = v;
+        sel.appendChild(opt);
       });
-      sel.value = state.filters[f.key] || '';
-      sel.onchange = e => { state.filters[f.key] = e.target.value; refresh(); };
+
+      const current = state.filters[f.key] || '';
+      if (current && values.includes(current)) {
+        sel.value = current;
+      } else {
+        sel.value = '';
+        if (current) state.filters[f.key] = '';
+      }
+
+      sel.onchange = e => {
+        state.filters[f.key] = e.target.value;
+        // إعادة بناء جميع الفلاتر فورًا حتى تتبع بعضها البعض.
+        buildFilterBar();
+        refresh();
+      };
+
       host.appendChild(sel);
     });
+
     const badge = document.getElementById('privateModeBadge');
     if (badge) badge.style.display = staffMode ? 'inline-flex' : 'none';
   }
+
+  // فلتر السلطات أُلغي نهائيًا من راصد؛ تنظيف أي قيمة قديمة منه.
+  if (Object.prototype.hasOwnProperty.call(state.filters, 'authority')) delete state.filters.authority;
 
   function baseFilters(r) {
     if (staffMode && privateRole !== 'manager' && !privateMap.has(String(r.wid))) return false;
@@ -1041,7 +1104,7 @@
     `;
 
     if (staffMode) {
-      const pr = privateMap.get(String(wid)) || {};
+      const pr = privateRecordForSchool(wid);
       dpBody.insertAdjacentHTML('beforeend', `
         <div class="rased-private-box">
           <div class="rased-private-title">👤 بيانات فريق الجودة والمدرسة</div>
@@ -1222,7 +1285,16 @@
 
   window.RASID_PRIVATE = {
     enter(payload, meta={}){
-      privateMap = new Map(Object.entries(payload || {}));
+      const entries = [];
+      if (Array.isArray(payload)) {
+        payload.forEach((v,i) => {
+          const key = v?.ministry_number ?? v?.wid ?? i;
+          entries.push([String(key), v || {}]);
+        });
+      } else if (payload && typeof payload === 'object') {
+        Object.entries(payload).forEach(([k,v]) => entries.push([String(k), v || {}]));
+      }
+      privateMap = new Map(entries);
       privateRole = meta.role || 'employee';
       privateEmployeeName = meta.employee_name || null;
       staffMode = true;
