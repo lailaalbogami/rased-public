@@ -1048,7 +1048,8 @@
 
   function selectSchool(wid) {
     selectedId = wid;
-    const rec = SCHOOLS.find(r => r.wid === wid);
+    const key = String(wid ?? '').trim();
+    const rec = SCHOOLS.find(r => String(r.wid ?? '').trim() === key);
     if (!rec) return;
     const meta = colorMeta(rec.interventionCategory);
     const wc = scoreColor(rec.envScore);
@@ -1114,16 +1115,21 @@
     `;
 
     if (staffMode) {
-      const pr = privateRecordForSchool(wid);
+      const pr = privateRecordForSchool(key);
+      const employee = pr.employee_name || privateEmployeeName || rec.officer || '—';
+      const principal = pr.principal_name || '—';
+      const mobile = pr.principal_mobile || '—';
+      const phone = pr.school_phone || '—';
+      const email = pr.principal_email || '—';
       dpBody.insertAdjacentHTML('beforeend', `
-        <div class="rased-private-box">
+        <div class="rased-private-box" style="display:block!important;visibility:visible!important;">
           <div class="rased-private-title">👤 بيانات فريق الجودة والمدرسة</div>
           <div class="rased-private-grid">
-            <div class="rased-private-item"><div class="rased-private-label">موظف فريق الجودة</div><div class="rased-private-value">${esc(pr.employee_name || rec.officer)}</div></div>
-            <div class="rased-private-item"><div class="rased-private-label">مدير المدرسة</div><div class="rased-private-value">${esc(pr.principal_name)}</div></div>
-            <div class="rased-private-item"><div class="rased-private-label">جوال مدير المدرسة</div><div class="rased-private-value">${esc(pr.principal_mobile)}</div></div>
-            <div class="rased-private-item"><div class="rased-private-label">هاتف المدرسة</div><div class="rased-private-value">${esc(pr.school_phone)}</div></div>
-            <div class="rased-private-item"><div class="rased-private-label">البريد الإلكتروني لمدير المدرسة</div><div class="rased-private-value">${esc(pr.principal_email)}</div></div>
+            <div class="rased-private-item"><div class="rased-private-label">موظف فريق الجودة</div><div class="rased-private-value">${esc(employee)}</div></div>
+            <div class="rased-private-item"><div class="rased-private-label">مدير المدرسة</div><div class="rased-private-value">${esc(principal)}</div></div>
+            <div class="rased-private-item"><div class="rased-private-label">جوال مدير المدرسة</div><div class="rased-private-value">${esc(mobile)}</div></div>
+            <div class="rased-private-item"><div class="rased-private-label">هاتف المدرسة</div><div class="rased-private-value">${esc(phone)}</div></div>
+            <div class="rased-private-item"><div class="rased-private-label">البريد الإلكتروني لمدير المدرسة</div><div class="rased-private-value">${esc(email)}</div></div>
           </div>
         </div>`);
     }
